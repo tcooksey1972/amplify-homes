@@ -1,6 +1,15 @@
 """
 Zillow RapidAPI client for fetching active listings.
-Uses the 'zillow-com1' API on RapidAPI (Basic tier: 50 req/month).
+
+Supports multiple Zillow API providers on RapidAPI. Set the
+RAPIDAPI_ZILLOW_HOST env var to switch providers. Defaults to
+'zillow-com1.p.rapidapi.com'. Compatible alternatives include:
+  - zillow-com1.p.rapidapi.com          (original, may be discontinued)
+  - real-time-zillow-data.p.rapidapi.com (by OpenWeb Ninja / letscrape)
+  - zillow-working-api.p.rapidapi.com   (by oneapiproject)
+
+All three expose the same endpoint names (propertyExtendedSearch, property,
+similarProperty) with the same parameter/response format.
 """
 
 import os
@@ -8,7 +17,9 @@ import time
 import requests
 
 
-RAPIDAPI_HOST = "zillow-com1.p.rapidapi.com"
+RAPIDAPI_HOST = os.environ.get(
+    "RAPIDAPI_ZILLOW_HOST", "zillow-com1.p.rapidapi.com"
+)
 BASE_URL = f"https://{RAPIDAPI_HOST}"
 
 

@@ -23,7 +23,7 @@ A Python CLI tool that identifies undervalued active real estate listings by ana
 
 The scraper follows a three-step pipeline:
 
-1. **Fetch** — Pulls active for-sale listings from the Zillow RapidAPI (`zillow-com1`) for a given zip code. Retrieves houses, condos, townhomes, and multi-family properties.
+1. **Fetch** — Pulls active for-sale listings from the Zillow RapidAPI for a given zip code. Retrieves houses, condos, townhomes, and multi-family properties.
 
 2. **Group & Compare** — Groups listings into "comp buckets" by property type and bedroom count (e.g., all 3-bedroom single-family homes are compared against each other). This ensures a ranch isn't being compared to a condo. Calculates the **median price per square foot** for each group as the baseline.
 
@@ -35,8 +35,8 @@ The scraper follows a three-step pipeline:
 
 - **Python 3.10+** (uses `match` type hints like `str | None`)
 - **pip** (Python package manager)
-- **RapidAPI account** with a subscription to the [`zillow-com1`](https://rapidapi.com/s.developer" target="_blank) API
-  - The **Basic (free) tier** provides 50 requests/month, which is sufficient — each run uses only 1–2 API calls
+- **RapidAPI account** with a subscription to a Zillow API provider (see [Configuration](#configuration) for supported providers)
+  - The **Basic (free) tier** typically provides 50 requests/month, which is sufficient — each run uses only 1–2 API calls
 
 ---
 
@@ -56,22 +56,33 @@ This installs:
 
 ## Configuration
 
-The scraper requires a single environment variable:
-
 | Variable | Required | Description |
 |---|---|---|
 | `RAPIDAPI_KEY` | Yes | Your RapidAPI key from [rapidapi.com/developer/dashboard](https://rapidapi.com/developer/dashboard) |
+| `RAPIDAPI_ZILLOW_HOST` | No | API host to use (see table below). Defaults to `zillow-com1.p.rapidapi.com` |
 
-Set it before running:
+### Supported API Providers
+
+The scraper works with any Zillow RapidAPI provider that exposes the `propertyExtendedSearch`, `property`, and `similarProperty` endpoints. Known compatible providers:
+
+| Host | Provider | Notes |
+|---|---|---|
+| `zillow-com1.p.rapidapi.com` | apimaker | Original default; may be discontinued |
+| `real-time-zillow-data.p.rapidapi.com` | OpenWeb Ninja / letscrape | Actively maintained, free tier available |
+| `zillow-working-api.p.rapidapi.com` | oneapiproject | Actively maintained |
+
+If the default host returns 404 or is unavailable, subscribe to one of the alternatives on RapidAPI and set the host:
 
 ```bash
 export RAPIDAPI_KEY="your-rapidapi-key-here"
+export RAPIDAPI_ZILLOW_HOST="real-time-zillow-data.p.rapidapi.com"
 ```
 
 Or create a `.env` file (not committed to git) and source it:
 
 ```bash
 echo 'export RAPIDAPI_KEY="your-key"' > .env
+echo 'export RAPIDAPI_ZILLOW_HOST="real-time-zillow-data.p.rapidapi.com"' >> .env
 source .env
 ```
 
@@ -260,7 +271,7 @@ scraper/
 ### Module Details
 
 **`zillow_client.py`** — `ZillowClient` class
-- Wraps the `zillow-com1` RapidAPI with typed methods
+- Wraps Zillow RapidAPI providers with typed methods (configurable via `RAPIDAPI_ZILLOW_HOST`)
 - `search_listings(zip_code)` — Fetches active for-sale listings (1 API call)
 - `get_property_details(zpid)` — Gets full property detail (1 API call, not used in default flow)
 - `get_comps(zpid)` — Gets similar properties (1 API call, not used in default flow)

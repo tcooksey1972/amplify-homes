@@ -46,6 +46,23 @@ class TestClientInit:
         client = ZillowClient(api_key="test-key")
         assert client.request_count == 0
 
+    def test_custom_host_via_env(self, monkeypatch):
+        """RAPIDAPI_ZILLOW_HOST env var overrides the default API host."""
+        monkeypatch.setenv("RAPIDAPI_ZILLOW_HOST", "zillow-working-api.p.rapidapi.com")
+        # Re-import to pick up the env var change
+        import importlib
+        import scraper.zillow_client as mod
+        importlib.reload(mod)
+        try:
+            assert mod.RAPIDAPI_HOST == "zillow-working-api.p.rapidapi.com"
+            assert "zillow-working-api.p.rapidapi.com" in mod.BASE_URL
+            client = mod.ZillowClient(api_key="test-key")
+            assert client.headers["x-rapidapi-host"] == "zillow-working-api.p.rapidapi.com"
+        finally:
+            # Restore original module state
+            monkeypatch.delenv("RAPIDAPI_ZILLOW_HOST", raising=False)
+            importlib.reload(mod)
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  search_listings()
