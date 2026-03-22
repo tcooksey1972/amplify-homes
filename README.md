@@ -1,55 +1,220 @@
 # Amplify Homes
 
-A real estate toolkit combining an AWS Amplify listing app with a Python-based deal-finding scraper. Built for the Indianapolis metro area.
+A real estate deal-finding toolkit for the Indianapolis metro area. Combines a **Python scraper** that scores active listings against comps with an **AWS Amplify web app** scaffold that can serve as the frontend.
 
 ---
 
-## Projects
+## Current State (What Works Today)
 
-### 1. Amplify Homes Web App
+### The Scraper — Fully Functional
 
-A React-based home listing demo app powered by AWS Amplify.
-
-- **Frontend:** React 17 + Amplify UI
-- **Backend:** AWS AppSync (GraphQL) + DynamoDB
-- **Auth:** API Key + IAM
-
-#### Quick Start
-
-```bash
-npm install
-npm start
-```
-
-See the [Amplify docs](https://docs.amplify.aws/) for backend setup (`amplify init`, `amplify push`).
-
----
-
-### 2. Real Estate Comp Scraper
-
-A Python CLI tool that finds undervalued active listings by scoring them against comparable properties in a zip code. Uses the Zillow RapidAPI to pull live listing data and applies a weighted scoring algorithm across four factors: price vs. comps, Zestimate gap, days on market, and price reductions.
-
-**Default target:** Zip code **46220** (Broad Ripple / Meridian-Kessler, Indianapolis)
-
-#### Quick Start
+The comp scraper is a standalone Python CLI. It's the working heart of this project right now.
 
 ```bash
 pip install -r scraper/requirements.txt
 export RAPIDAPI_KEY="your-rapidapi-key"
-python -m scraper.main
+python -m scraper.main --zip 46220 --top 10
 ```
 
-#### Example Output
+It pulls live Zillow listings, groups them by property type + bedrooms, scores each one on a 0–100 scale, and prints ranked deals to your terminal. You can also export to CSV.
+
+See [`scraper/README.md`](scraper/README.md) for the full deep-dive: scoring methodology, all CLI flags, output format, API budget, and troubleshooting.
+
+### The Web App — Scaffolded, Not Built
+
+The React + Amplify app exists as boilerplate only. `App.js` renders an empty `<div>`. The Amplify backend has a single GraphQL model (`Home` with `id`, `address`, `image_url`, `price`) backed by DynamoDB — but no UI talks to it yet and the scraper doesn't write to it.
+
+**In short:** the scraper finds deals, but you can only see them in the terminal or a CSV file. The web app is the shell that could display them, but it's not wired up.
+
+---
+
+## Architecture
 
 ```
-  #1  [A]  Score: 58.3/100
-  1234 N Meridian St, Indianapolis, IN 46220
-  Price: $275,000   |   3bd/2ba   |   1,800 sqft
-  $/sqft: $153   |   Zestimate: $315,000 (+40,000)
-  Scores → comps: 22.5/40  zest: 17.8/25  DOM: 14.9/20  reduction: 3.1/15
+┌─────────────────────────────────────────────────────────────────┐
+│                        WHAT EXISTS TODAY                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   ┌─────────────┐      Terminal / CSV                           │
+│   │   Scraper    │──────────────────────▶  You read results     │
+│   │  (Python)    │                          manually             │
+│   └──────┬───────┘                                              │
+│          │ Zillow RapidAPI                                      │
+│          ▼                                                      │
+│   ┌─────────────┐                                               │
+│   │  zillow-com1 │  (50 req/mo free tier)                       │
+│   │  RapidAPI    │                                              │
+│   └─────────────┘                                               │
+│                                                                 │
+│   ┌─────────────┐      ┌──────────┐      ┌──────────┐          │
+│   │  React App  │─────▶│ AppSync  │─────▶│ DynamoDB │          │
+│   │  (empty)    │      │ (GraphQL)│      │ (Home)   │          │
+│   └─────────────┘      └──────────┘      └──────────┘          │
+│        Not connected to scraper — no UI implemented             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-See [`scraper/README.md`](scraper/README.md) for full documentation — scoring methodology, CLI options, API budget details, and troubleshooting.
+### Tech Stack
+
+| Layer | Technology | Status |
+|---|---|---|
+| **Scraper CLI** | Python 3.10+, `requests` | Working |
+| **Scraper API** | Zillow RapidAPI (`zillow-com1`) | Working (50 req/mo free) |
+| **Frontend** | React 17, Amplify UI 2.13 | Scaffolded only |
+| **Backend API** | AWS AppSync (GraphQL) | Deployed, minimal schema |
+| **Database** | DynamoDB (pay-per-request) | Deployed, empty |
+| **Auth** | API Key (public) + IAM | Configured |
+| **Hosting** | AWS Amplify Console | Available but not set up |
+| **Region** | eu-west-2 (London) | Staging env |
+
+---
+
+## How to Interact With It Today
+
+### Option 1: Run the scraper from your terminal (works now)
+
+```bash
+# Find the top deals in Broad Ripple
+python -m scraper.main --zip 46220
+
+# Export to CSV and open in Excel / Google Sheets
+python -m scraper.main --zip 46220 --csv deals.csv
+
+# Only show strong deals
+python -m scraper.main --zip 46220 --min-score 30 --top 5
+```
+
+### Option 2: Run the React dev server (shows a blank page)
+
+```bash
+npm install
+# You need aws-exports.js — generated by `amplify push` if you have the Amplify CLI set up
+npm start
+# Opens http://localhost:3000 — currently renders nothing
+```
+
+### Option 3: Deploy the backend with Amplify CLI
+
+```bash
+npm install -g @aws-amplify/cli
+amplify init          # Connect to your AWS account
+amplify push          # Deploy AppSync + DynamoDB
+amplify publish       # Build React app and deploy to Amplify Hosting (S3 + CloudFront)
+```
+
+This gives you a serverless website at an Amplify-provided URL, but since the React app is empty, there's nothing to see yet.
+
+---
+
+## How to Build On It — Roadmap
+
+Here's the natural path from "scraper in a terminal" to "serverless deal-finding website":
+
+### Phase 1: Connect the Scraper to the Database
+
+Feed scraper results into DynamoDB so the web app has data to display.
+
+**Option A — Lambda cron job (recommended for serverless)**
+- Create an AWS Lambda function that runs the scraper on a schedule (e.g., daily via EventBridge)
+- Lambda writes scored listings to the DynamoDB `Home` table via AppSync
+- Fully serverless, no server to manage, runs on a schedule
+
+**Option B — Manual import script**
+- Add a `--dynamo` flag to the scraper that writes results directly to DynamoDB using `boto3`
+- Run it manually or via cron on your machine
+- Simpler to build, but not serverless
+
+**Option C — API Gateway + Lambda (on-demand)**
+- Expose the scraper as a REST endpoint via API Gateway → Lambda
+- The web app calls this endpoint to trigger a fresh scan
+- Most flexible, but higher API cost
+
+### Phase 2: Build the React Frontend
+
+The app scaffold is ready — `index.js` already configures Amplify and wraps the app in `AmplifyProvider`. You just need to build components.
+
+**Expand the GraphQL schema** to match the scraper's `Listing` dataclass:
+
+```graphql
+type Home @model @auth(rules: [{allow: public}]) {
+  id: ID!
+  address: String!
+  price: Float!
+  zestimate: Float
+  sqft: Float!
+  pricePerSqft: Float
+  bedrooms: Int
+  bathrooms: Float
+  propertyType: String
+  daysOnMarket: Int
+  priceReduction: Float
+  yearBuilt: Int
+  dealScore: Float!
+  scoreBreakdown: AWSJSON
+  imageUrl: String
+  zillowUrl: String
+  zipCode: String!
+  lastUpdated: AWSDateTime
+}
+```
+
+**Build React components:**
+- Listing card with deal score badge and letter grade
+- Sortable/filterable table view
+- Zip code search bar
+- Score breakdown visualization
+- Map view (Mapbox or Google Maps)
+
+### Phase 3: Deploy as a Serverless Website
+
+Once the frontend has UI, deploy the full stack:
+
+```bash
+amplify publish
+```
+
+This builds the React app and deploys it to **Amplify Hosting** (S3 + CloudFront behind the scenes). You get:
+- A public URL (e.g., `https://main.d1234abcd.amplifyapp.com`)
+- HTTPS by default
+- Global CDN via CloudFront
+- CI/CD if you connect to a Git branch
+
+**The full serverless architecture would look like:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    FUTURE SERVERLESS STACK                    │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│   EventBridge (daily)                                        │
+│        │                                                     │
+│        ▼                                                     │
+│   ┌──────────┐     ┌──────────┐     ┌──────────┐            │
+│   │  Lambda   │────▶│ AppSync  │────▶│ DynamoDB │            │
+│   │ (scraper) │     │ (GraphQL)│     │ (Home)   │            │
+│   └──────────┘     └─────┬────┘     └──────────┘            │
+│        │                  │                                   │
+│   Zillow API         ┌───┴────┐                              │
+│                      │        │                              │
+│                      ▼        ▼                              │
+│               ┌──────────┐  ┌──────────┐                     │
+│               │  React   │  │ Amplify  │                     │
+│               │  App     │  │ Hosting  │                     │
+│               │ (S3+CDN) │  │ (CI/CD)  │                     │
+│               └──────────┘  └──────────┘                     │
+│                                                              │
+│   Cost: ~$0/mo at low traffic (free tier covers most of it)  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Phase 4: Enhancements
+
+- **User auth** — Add Cognito via `amplify add auth` so users can save favorites
+- **Notifications** — SNS/SES alerts when a high-score listing appears
+- **Multiple zips** — Track several neighborhoods simultaneously
+- **Historical tracking** — Store price history to spot trends
+- **Property detail pages** — Use `get_property_details()` and `get_comps()` (already in the client)
 
 ---
 
@@ -57,21 +222,41 @@ See [`scraper/README.md`](scraper/README.md) for full documentation — scoring 
 
 ```
 amplify-homes/
-├── src/                    # React app source (Amplify frontend)
-├── public/                 # Static assets
-├── amplify/                # AWS Amplify backend config (AppSync, DynamoDB)
-├── scraper/                # Python comp scraper
-│   ├── main.py             #   CLI entry point
-│   ├── scoring.py          #   Comp analysis & deal scoring engine
-│   ├── zillow_client.py    #   Zillow RapidAPI client
-│   ├── requirements.txt    #   Python dependencies
-│   └── README.md           #   Full scraper documentation
-├── package.json            # Node.js dependencies
-└── README.md               # This file
+├── amplify/                    # AWS Amplify backend configuration
+│   ├── backend/
+│   │   ├── api/amplifyhomes/
+│   │   │   └── schema.graphql  #   GraphQL schema (Home model)
+│   │   └── backend-config.json #   Service definitions
+│   ├── .config/                #   Project settings
+│   └── team-provider-info.json #   Deployed environment (eu-west-2)
+│
+├── src/                        # React frontend (scaffolded, not built)
+│   ├── App.js                  #   Root component (empty div)
+│   ├── index.js                #   Amplify init + AmplifyProvider wrapper
+│   └── aws-exports.js          #   (generated by `amplify push`, gitignored)
+│
+├── public/                     # Static assets (CRA boilerplate)
+│
+├── scraper/                    # Python comp scraper (fully functional)
+│   ├── main.py                 #   CLI entry point & output formatting
+│   ├── scoring.py              #   Comp grouping, scoring engine, Listing model
+│   ├── zillow_client.py        #   Zillow RapidAPI wrapper with retry logic
+│   ├── requirements.txt        #   Python deps (requests)
+│   └── README.md               #   Full scraper documentation
+│
+├── package.json                # Node.js deps (React 17, Amplify 4.x)
+└── README.md                   # This file
 ```
 
 ---
 
-## License
+## Quick Reference
 
-Private repository — not for redistribution.
+| What you want to do | Command |
+|---|---|
+| Find deals in a zip code | `python -m scraper.main --zip 46220` |
+| Export deals to CSV | `python -m scraper.main --csv deals.csv` |
+| Run the React dev server | `npm start` |
+| Deploy the Amplify backend | `amplify push` |
+| Deploy the full website | `amplify publish` |
+| Add a new backend feature | `amplify add <category>` (e.g., `auth`, `function`, `storage`) |
