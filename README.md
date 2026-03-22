@@ -20,39 +20,60 @@ It pulls live Zillow listings, groups them by property type + bedrooms, scores e
 
 See [`scraper/README.md`](scraper/README.md) for the full deep-dive: scoring methodology, all CLI flags, output format, API budget, and troubleshooting.
 
+### The Pipeline — Ready to Deploy
+
+A serverless Lambda function that runs the scraper on a daily schedule across 5 Indianapolis zip codes and writes scored deals to DynamoDB. Uses AWS SAM for deployment.
+
+```bash
+# Deploy (one-time setup)
+./pipeline/deploy.sh
+
+# Trigger manually
+aws lambda invoke --function-name amplify-homes-scraper --payload '{}' /dev/stdout
+```
+
+See [`pipeline/README.md`](pipeline/README.md) for deployment guide, configuration, and monitoring.
+
 ### The Web App — Scaffolded, Not Built
 
-The React + Amplify app exists as boilerplate only. `App.js` renders an empty `<div>`. The Amplify backend has a single GraphQL model (`Home` with `id`, `address`, `image_url`, `price`) backed by DynamoDB — but no UI talks to it yet and the scraper doesn't write to it.
+The React + Amplify app exists as boilerplate only. `App.js` renders an empty `<div>`. The Amplify backend has a full GraphQL `Home` model backed by DynamoDB — the pipeline writes to it, but no UI reads from it yet.
 
-**In short:** the scraper finds deals, but you can only see them in the terminal or a CSV file. The web app is the shell that could display them, but it's not wired up.
+**In short:** the scraper finds deals, the pipeline loads them into DynamoDB on a schedule, but the web app still needs a frontend built to display them.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        WHAT EXISTS TODAY                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   ┌─────────────┐      Terminal / CSV                           │
-│   │   Scraper    │──────────────────────▶  You read results     │
-│   │  (Python)    │                          manually             │
-│   └──────┬───────┘                                              │
-│          │ Zillow RapidAPI                                      │
-│          ▼                                                      │
-│   ┌─────────────┐                                               │
-│   │  zillow-com1 │  (50 req/mo free tier)                       │
-│   │  RapidAPI    │                                              │
-│   └─────────────┘                                               │
-│                                                                 │
-│   ┌─────────────┐      ┌──────────┐      ┌──────────┐          │
-│   │  React App  │─────▶│ AppSync  │─────▶│ DynamoDB │          │
-│   │  (empty)    │      │ (GraphQL)│      │ (Home)   │          │
-│   └─────────────┘      └──────────┘      └──────────┘          │
-│        Not connected to scraper — no UI implemented             │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      CURRENT ARCHITECTURE                        │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌─────────────┐      Terminal / CSV                            │
+│   │   Scraper    │──────────────────────▶  Manual use             │
+│   │  (Python)    │                                               │
+│   └──────┬───────┘                                               │
+│          │                                                       │
+│          │ Zillow RapidAPI                                       │
+│          ▼                                                       │
+│   ┌─────────────┐                                                │
+│   │  zillow-com1 │  (50 req/mo free tier)                        │
+│   │  RapidAPI    │                                               │
+│   └──────┬──────┘                                                │
+│          │                                                       │
+│   ┌──────┴──────┐     EventBridge (daily)                        │
+│   │   Lambda    │◀──────────────────────  Automated pipeline     │
+│   │  (pipeline) │                                                │
+│   └──────┬──────┘                                                │
+│          │ batch_write_item                                      │
+│          ▼                                                       │
+│   ┌─────────────┐      ┌──────────┐      ┌──────────┐           │
+│   │  DynamoDB   │◀─────│ AppSync  │◀─────│ React App│           │
+│   │  (Home)     │      │ (GraphQL)│      │ (no UI)  │           │
+│   └─────────────┘      └──────────┘      └──────────┘           │
+│                                                                  │
+│   ✅ Scraper working    ✅ Pipeline ready    ⬜ Frontend needed   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Tech Stack
@@ -61,9 +82,10 @@ The React + Amplify app exists as boilerplate only. `App.js` renders an empty `<
 |---|---|---|
 | **Scraper CLI** | Python 3.10+, `requests` | Working |
 | **Scraper API** | Zillow RapidAPI (`zillow-com1`) | Working (50 req/mo free) |
+| **Pipeline** | Lambda + EventBridge + SAM | Ready to deploy |
 | **Frontend** | React 17, Amplify UI 2.13 | Scaffolded only |
-| **Backend API** | AWS AppSync (GraphQL) | Deployed, minimal schema |
-| **Database** | DynamoDB (pay-per-request) | Deployed, empty |
+| **Backend API** | AWS AppSync (GraphQL) | Deployed, full Home schema |
+| **Database** | DynamoDB (pay-per-request) | Deployed, pipeline-ready |
 | **Auth** | API Key (public) + IAM | Configured |
 | **Hosting** | AWS Amplify Console | Available but not set up |
 | **Region** | eu-west-2 (London) | Staging env |
@@ -111,53 +133,19 @@ This gives you a serverless website at an Amplify-provided URL, but since the Re
 
 Here's the natural path from "scraper in a terminal" to "serverless deal-finding website":
 
-### Phase 1: Connect the Scraper to the Database
+### Phase 1: Connect the Scraper to the Database — DONE
 
-Feed scraper results into DynamoDB so the web app has data to display.
+The `pipeline/` directory contains a Lambda function + SAM template that:
+- Runs the scraper daily via EventBridge
+- Scrapes 5 Indianapolis zip codes
+- Scores all listings and writes deals to DynamoDB
+- Includes API budget guards and CloudWatch logging
 
-**Option A — Lambda cron job (recommended for serverless)**
-- Create an AWS Lambda function that runs the scraper on a schedule (e.g., daily via EventBridge)
-- Lambda writes scored listings to the DynamoDB `Home` table via AppSync
-- Fully serverless, no server to manage, runs on a schedule
+Deploy it: `./pipeline/deploy.sh` → see [`pipeline/README.md`](pipeline/README.md)
 
-**Option B — Manual import script**
-- Add a `--dynamo` flag to the scraper that writes results directly to DynamoDB using `boto3`
-- Run it manually or via cron on your machine
-- Simpler to build, but not serverless
+### Phase 2: Build the React Frontend — NEXT
 
-**Option C — API Gateway + Lambda (on-demand)**
-- Expose the scraper as a REST endpoint via API Gateway → Lambda
-- The web app calls this endpoint to trigger a fresh scan
-- Most flexible, but higher API cost
-
-### Phase 2: Build the React Frontend
-
-The app scaffold is ready — `index.js` already configures Amplify and wraps the app in `AmplifyProvider`. You just need to build components.
-
-**Expand the GraphQL schema** to match the scraper's `Listing` dataclass:
-
-```graphql
-type Home @model @auth(rules: [{allow: public}]) {
-  id: ID!
-  address: String!
-  price: Float!
-  zestimate: Float
-  sqft: Float!
-  pricePerSqft: Float
-  bedrooms: Int
-  bathrooms: Float
-  propertyType: String
-  daysOnMarket: Int
-  priceReduction: Float
-  yearBuilt: Int
-  dealScore: Float!
-  scoreBreakdown: AWSJSON
-  imageUrl: String
-  zillowUrl: String
-  zipCode: String!
-  lastUpdated: AWSDateTime
-}
-```
+The app scaffold is ready — `index.js` already configures Amplify and wraps the app in `AmplifyProvider`. The GraphQL schema is expanded to match all scraper fields. You just need to build components.
 
 **Build React components:**
 - Listing card with deal score badge and letter grade
@@ -244,6 +232,14 @@ amplify-homes/
 │   ├── requirements.txt        #   Python deps (requests)
 │   └── README.md               #   Full scraper documentation
 │
+├── pipeline/                   # Serverless data pipeline (Lambda + SAM)
+│   ├── handler.py              #   Lambda entry point — scrape → score → DynamoDB
+│   ├── config.py               #   Target zips, thresholds, budget caps
+│   ├── template.yaml           #   SAM template (Lambda + EventBridge + IAM)
+│   ├── deploy.sh               #   One-command deployment script
+│   ├── requirements.txt        #   Lambda Python deps
+│   └── README.md               #   Pipeline documentation
+│
 ├── package.json                # Node.js deps (React 17, Amplify 4.x)
 └── README.md                   # This file
 ```
@@ -256,6 +252,9 @@ amplify-homes/
 |---|---|
 | Find deals in a zip code | `python -m scraper.main --zip 46220` |
 | Export deals to CSV | `python -m scraper.main --csv deals.csv` |
+| Deploy the scraper pipeline | `./pipeline/deploy.sh` |
+| Trigger pipeline manually | `aws lambda invoke --function-name amplify-homes-scraper --payload '{}' /dev/stdout` |
+| View pipeline logs | `sam logs -n amplify-homes-scraper --tail` |
 | Run the React dev server | `npm start` |
 | Deploy the Amplify backend | `amplify push` |
 | Deploy the full website | `amplify publish` |
